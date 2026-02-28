@@ -1,0 +1,31 @@
+name: 'RollHook Deploy'
+description: 'Trigger a zero-downtime rolling deployment via RollHook with real-time log streaming'
+branding:
+  icon: 'upload-cloud'
+  color: 'blue'
+inputs:
+  url:
+    description: 'RollHook server base URL (e.g. https://deploy.example.com)'
+    required: true
+  token:
+    description: 'RollHook webhook token'
+    required: true
+  app:
+    description: 'App name in rollhook.config.yaml. Defaults to the current GitHub repo name.'
+    required: false
+    default: ${{ github.event.repository.name }}
+  image_tag:
+    description: 'Docker image tag to deploy'
+    required: true
+  timeout:
+    description: 'Max seconds to wait for deployment to complete'
+    required: false
+    default: '600'
+outputs:
+  job_id:
+    description: 'RollHook job ID'
+  status:
+    description: 'Final deployment status (success or failed)'
+runs:
+  using: 'node20'
+  main: 'dist/index.js'
