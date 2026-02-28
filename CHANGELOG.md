@@ -1,3 +1,10 @@
+# [1.1.0](https://github.com/jkrumm/rollhook-action/compare/v1.0.3...v1.1.0) (2026-02-28)
+
+
+### Features
+
+* derive app from image_tag, remove app input ([9667015](https://github.com/jkrumm/rollhook-action/commit/966701572441eeb3013c423c22161303be7ccf07))
+
 ## [1.0.3](https://github.com/jkrumm/rollhook-action/compare/v1.0.2...v1.0.3) (2026-02-28)
 
 
