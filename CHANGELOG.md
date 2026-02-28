@@ -1,3 +1,10 @@
+## [1.0.2](https://github.com/jkrumm/rollhook-action/compare/v1.0.1...v1.0.2) (2026-02-28)
+
+
+### Bug Fixes
+
+* add admin_token input for job polling and log streaming ([50f0c19](https://github.com/jkrumm/rollhook-action/commit/50f0c19b9c8b25d5928430407ad3b86bce41e68b))
+
 ## [1.0.1](https://github.com/jkrumm/rollhook-action/compare/v1.0.0...v1.0.1) (2026-02-28)
 
 
