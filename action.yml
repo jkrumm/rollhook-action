@@ -10,10 +10,6 @@ inputs:
   token:
     description: 'RollHook token (webhook or admin role)'
     required: true
-  app:
-    description: 'App label for this deployment (used for job tracking). Defaults to the current GitHub repo name.'
-    required: false
-    default: ${{ github.event.repository.name }}
   image_tag:
     description: 'Docker image tag to deploy (used for container discovery on the server)'
     required: true

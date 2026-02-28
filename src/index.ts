@@ -217,8 +217,8 @@ async function run(): Promise<void> {
   const urlWithProtocol = /^https?:\/\//i.test(rawUrl) ? rawUrl : `https://${rawUrl}`
   const url = new URL(urlWithProtocol).origin
   const token = core.getInput('token', { required: true })
-  const app = core.getInput('app', { required: true })
   const imageTag = core.getInput('image_tag', { required: true })
+  const app = imageTag.split('/').pop()!.split(':')[0]
   const timeoutSec = Number.parseInt(core.getInput('timeout') || '600', 10) || 600
   const timeoutMs = timeoutSec * 1000
 
@@ -231,7 +231,7 @@ async function run(): Promise<void> {
 
   // ?async=true returns {job_id} immediately instead of blocking until completion.
   // Required so we can start streaming logs concurrently with polling.
-  const triggerRes = await fetch(`${url}/deploy/${app}?async=true`, {
+  const triggerRes = await fetch(`${url}/deploy?async=true`, {
     method: 'POST',
     headers,
     body: JSON.stringify({ image_tag: imageTag }),
