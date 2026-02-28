@@ -8,8 +8,11 @@ inputs:
     description: 'RollHook server base URL (e.g. https://deploy.example.com)'
     required: true
   token:
-    description: 'RollHook webhook token'
+    description: 'RollHook webhook token (used for POST /deploy)'
     required: true
+  admin_token:
+    description: 'RollHook admin token (used for GET /jobs and SSE log streaming). Defaults to token if not provided — set this when using separate webhook/admin tokens.'
+    required: false
   app:
     description: 'App name in rollhook.config.yaml. Defaults to the current GitHub repo name.'
     required: false

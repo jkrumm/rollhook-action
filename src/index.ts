@@ -215,13 +215,20 @@ async function pollUntilDone(
 async function run(): Promise<void> {
   const url = core.getInput('url', { required: true }).replace(/\/$/, '')
   const token = core.getInput('token', { required: true })
+  // admin_token is required for GET /jobs and SSE logs (admin role).
+  // Falls back to token for users who use a single admin token for everything.
+  const adminToken = core.getInput('admin_token') || token
   const app = core.getInput('app', { required: true })
   const imageTag = core.getInput('image_tag', { required: true })
   const timeoutSec = Number.parseInt(core.getInput('timeout') || '600', 10) || 600
   const timeoutMs = timeoutSec * 1000
 
-  const headers: Record<string, string> = {
+  const triggerHeaders: Record<string, string> = {
     'Authorization': `Bearer ${token}`,
+    'Content-Type': 'application/json',
+  }
+  const adminHeaders: Record<string, string> = {
+    'Authorization': `Bearer ${adminToken}`,
     'Content-Type': 'application/json',
   }
 
@@ -231,7 +238,7 @@ async function run(): Promise<void> {
   // Required so we can start streaming logs concurrently with polling.
   const triggerRes = await fetch(`${url}/deploy/${app}?async=true`, {
     method: 'POST',
-    headers,
+    headers: triggerHeaders,
     body: JSON.stringify({ image_tag: imageTag }),
   })
 
@@ -252,11 +259,11 @@ async function run(): Promise<void> {
   // Phase 2 wait and proceed to the catchup fetch.
   const abortController = new AbortController()
 
-  const pollPromise = pollUntilDone(url, headers, jobId, timeoutMs)
+  const pollPromise = pollUntilDone(url, adminHeaders, jobId, timeoutMs)
     .finally(() => abortController.abort())
 
   const [, pollResult] = await Promise.allSettled([
-    streamLogs(url, headers, jobId, abortController.signal),
+    streamLogs(url, adminHeaders, jobId, abortController.signal),
     pollPromise,
   ])
 
