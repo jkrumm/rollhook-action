@@ -2,14 +2,22 @@
 
 Trigger a zero-downtime rolling deployment via [RollHook](https://github.com/jkrumm/rollhook) with real-time log streaming back to CI.
 
+Uses GitHub Actions OIDC — no secrets to store or rotate.
+
 ## Usage
 
 ```yaml
-- uses: jkrumm/rollhook-action@v1
-  with:
-    url: ${{ secrets.ROLLHOOK_URL }}
-    token: ${{ secrets.ROLLHOOK_WEBHOOK_TOKEN }}
-    image_tag: registry.example.com/my-app:${{ github.sha }}
+permissions:
+  id-token: write   # required for OIDC token
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: jkrumm/rollhook-action@v1
+        with:
+          url: ${{ vars.ROLLHOOK_URL }}
+          image_tag: registry.example.com/my-app:${{ github.sha }}
 ```
 
 ## Inputs
@@ -17,8 +25,6 @@ Trigger a zero-downtime rolling deployment via [RollHook](https://github.com/jkr
 | Input | Required | Default | Description |
 |-|-|-|-|
 | `url` | yes | — | RollHook server base URL |
-| `token` | yes | — | RollHook webhook token |
-| `app` | no | repo name | App name in `rollhook.config.yaml` |
 | `image_tag` | yes | — | Docker image tag to deploy |
 | `timeout` | no | `600` | Max seconds to wait for completion |
 
@@ -31,23 +37,30 @@ Trigger a zero-downtime rolling deployment via [RollHook](https://github.com/jkr
 
 ## How it works
 
-1. POSTs to `/deploy/:app` — receives a `job_id` immediately
-2. Streams real-time logs from the deployment via SSE (`/jobs/:id/logs`)
-3. Polls `/jobs/:id` until terminal state (`success` or `failed`)
-4. Fails the step if deployment fails or timeout is exceeded
+1. Requests a short-lived OIDC token from GitHub (audience = RollHook URL)
+2. POSTs to `/deploy` — receives a `job_id` immediately
+3. Streams real-time logs via SSE (`/jobs/:id/logs`)
+4. Polls `/jobs/:id` until terminal state (`success` or `failed`)
+5. Fails the step if deployment fails or timeout is exceeded
 
-## Full example
+## Server-side setup
+
+Add `rollhook.allowed_repos` to your app service in compose.yml on the server:
 
 ```yaml
-deploy:
-  runs-on: ubuntu-latest
-  needs: [docker]
-  steps:
-    - uses: jkrumm/rollhook-action@v1
-      with:
-        url: ${{ secrets.ROLLHOOK_URL }}
-        token: ${{ secrets.ROLLHOOK_WEBHOOK_TOKEN }}
-        app: my-api
-        image_tag: registry.example.com/my-api:${{ needs.docker.outputs.version }}
-        timeout: '300'
+services:
+  app:
+    labels:
+      - rollhook.allowed_repos=myorg/myapp
+      # Optional: restrict to specific refs (default: refs/heads/main and refs/heads/master)
+      # - rollhook.allowed_refs=refs/heads/main,refs/heads/prod
+```
+
+Set `ROLLHOOK_URL` on the RollHook container to enable audience verification:
+
+```yaml
+services:
+  rollhook:
+    environment:
+      ROLLHOOK_URL: https://rollhook.example.com
 ```
