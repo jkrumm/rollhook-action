@@ -7,9 +7,6 @@ inputs:
   url:
     description: 'RollHook server base URL (e.g. https://deploy.example.com)'
     required: true
-  token:
-    description: 'RollHook token (webhook or admin role)'
-    required: true
   image_tag:
     description: 'Docker image tag to deploy (used for container discovery on the server)'
     required: true

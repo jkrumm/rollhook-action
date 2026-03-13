@@ -216,8 +216,21 @@ async function run(): Promise<void> {
   const rawUrl = core.getInput('url', { required: true }).trim()
   const urlWithProtocol = /^https?:\/\//i.test(rawUrl) ? rawUrl : `https://${rawUrl}`
   const url = new URL(urlWithProtocol).origin
-  const token = core.getInput('token', { required: true })
   const imageTag = core.getInput('image_tag', { required: true })
+
+  // Request a short-lived OIDC token from GitHub Actions.
+  // The audience is set to the RollHook server URL so the server can verify it.
+  // Requires `permissions: id-token: write` in the calling workflow.
+  let token: string
+  try {
+    token = await core.getIDToken(url)
+  }
+  catch (e) {
+    core.setFailed(
+      `Failed to get OIDC token. Ensure your workflow has:\n  permissions:\n    id-token: write\n\nError: ${(e as Error).message}`,
+    )
+    return
+  }
   const app = imageTag.split('/').pop()!.split(':')[0]
   const timeoutSec = Number.parseInt(core.getInput('timeout') || '600', 10) || 600
   const timeoutMs = timeoutSec * 1000
