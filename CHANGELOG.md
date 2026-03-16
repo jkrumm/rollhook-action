@@ -1,3 +1,11 @@
+# [1.2.0](https://github.com/jkrumm/rollhook-action/compare/v1.1.0...v1.2.0) (2026-03-16)
+
+
+### Features
+
+* **auth:** replace token input with GitHub Actions OIDC ([cd19c52](https://github.com/jkrumm/rollhook-action/commit/cd19c52d9d39d80f8f6005c5795704a3002aeee4))
+* **runtime:** upgrade to Node.js 24 ([44209d0](https://github.com/jkrumm/rollhook-action/commit/44209d0f907f439137df886eaaa55ae237a0f49f))
+
 # [1.1.0](https://github.com/jkrumm/rollhook-action/compare/v1.0.3...v1.1.0) (2026-02-28)
 
 
