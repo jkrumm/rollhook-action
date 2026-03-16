@@ -20,5 +20,5 @@ outputs:
   status:
     description: 'Final deployment status (success or failed)'
 runs:
-  using: 'node20'
+  using: 'node24'
   main: 'dist/index.js'
