@@ -10,6 +10,9 @@ inputs:
   image_name:
     description: 'Image name (without registry prefix or tag), e.g. myapp'
     required: true
+  image_tag:
+    description: 'Pre-built image tag to deploy (skips build+push). Use when pushing to an external registry like GHCR.'
+    required: false
   dockerfile:
     description: 'Path to Dockerfile'
     required: false

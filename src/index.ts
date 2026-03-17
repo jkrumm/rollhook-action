@@ -216,13 +216,16 @@ async function pollUntilDone(
 async function run(): Promise<void> {
   const rawUrl = core.getInput('url', { required: true }).trim()
   const url = new URL(/^https?:\/\//i.test(rawUrl) ? rawUrl : `https://${rawUrl}`).origin
-  const registryHost = url.replace(/^https?:\/\//, '')
   const imageName = core.getInput('image_name', { required: true })
+  const externalImageTag = core.getInput('image_tag')
   const dockerfile = core.getInput('dockerfile') || 'Dockerfile'
   const buildContext = core.getInput('context') || '.'
   const sha = process.env.GITHUB_SHA ?? 'latest'
-  const imageTag = `${registryHost}/${imageName}:${sha}`
   const timeoutMs = (Number.parseInt(core.getInput('timeout') || '600', 10) || 600) * 1000
+
+  // Determine the image tag: use external if provided, otherwise build to RollHook registry.
+  const registryHost = url.replace(/^https?:\/\//, '')
+  const imageTag = externalImageTag || `${registryHost}/${imageName}:${sha}`
 
   // 1. Get OIDC token — audience is the RollHook server URL so the server can verify it.
   // Requires `permissions: id-token: write` in the calling workflow.
@@ -242,52 +245,50 @@ async function run(): Promise<void> {
     'Content-Type': 'application/json',
   }
 
-  // 2. Exchange OIDC token for registry credential.
-  core.info('Authenticating with RollHook...')
-  const tokenRes = await fetchWithRetry(
-    `${url}/auth/token`,
-    { method: 'POST', headers, body: JSON.stringify({ image_name: imageName }) },
-    3,
-    1000,
-  )
-  if (!tokenRes.ok) {
-    core.setFailed(`POST /auth/token failed (${tokenRes.status}): ${await tokenRes.text()}`)
-    return
-  }
-  const { token: registrySecret } = await tokenRes.json() as { token: string }
+  // 2. Build + push to RollHook's built-in registry (skipped when image_tag is provided).
+  if (!externalImageTag) {
+    // Exchange OIDC token for registry credential.
+    core.info('Authenticating with RollHook...')
+    const tokenRes = await fetchWithRetry(
+      `${url}/auth/token`,
+      { method: 'POST', headers, body: JSON.stringify({ image_name: imageName }) },
+      3,
+      1000,
+    )
+    if (!tokenRes.ok) {
+      core.setFailed(`POST /auth/token failed (${tokenRes.status}): ${await tokenRes.text()}`)
+      return
+    }
+    const { token: registrySecret } = await tokenRes.json() as { token: string }
 
-  // 3. docker build
-  core.info(`Building ${imageTag}...`)
-  try {
-    await exec.exec('docker', ['build', '-t', imageTag, '-f', dockerfile, buildContext])
-  }
-  catch (e) {
-    core.setFailed(`docker build failed: ${(e as Error).message}`)
-    return
-  }
+    // docker build
+    core.info(`Building ${imageTag}...`)
+    try {
+      await exec.exec('docker', ['build', '-t', imageTag, '-f', dockerfile, buildContext])
+    }
+    catch (e) {
+      core.setFailed(`docker build failed: ${(e as Error).message}`)
+      return
+    }
 
-  // 4. Push via crane — avoids concurrency issues with Cloudflare Tunnel.
-  // Cloudflare Tunnel multiplexes over 4 connections; concurrent blob HEAD checks from
-  // docker push and skopeo get canceled by the edge (HTTP 520). crane push reads from a
-  // docker save tarball and pushes with a more controlled upload pipeline.
-  core.info(`Pushing ${imageTag}...`)
-  try {
-    const craneVersion = 'v0.20.3'
-    await exec.exec('bash', ['-c',
-      `curl -sL "https://github.com/google/go-containerregistry/releases/download/${craneVersion}/go-containerregistry_Linux_x86_64.tar.gz" | sudo tar xzf - -C /usr/local/bin crane`,
-    ])
-    await exec.exec('crane', ['auth', 'login', registryHost, '-u', 'rollhook', '--password-stdin'], {
-      input: Buffer.from(registrySecret),
-    })
-    await exec.exec('docker', ['save', imageTag, '-o', '/tmp/image.tar'])
-    await exec.exec('crane', ['push', '/tmp/image.tar', imageTag])
+    // docker push
+    core.info(`Pushing ${imageTag}...`)
+    try {
+      await exec.exec('docker', ['login', registryHost, '-u', 'rollhook', '--password-stdin'], {
+        input: Buffer.from(registrySecret),
+      })
+      await exec.exec('docker', ['push', imageTag])
+    }
+    catch (e) {
+      core.setFailed(`Image push failed: ${(e as Error).message}`)
+      return
+    }
   }
-  catch (e) {
-    core.setFailed(`Image push failed: ${(e as Error).message}`)
-    return
+  else {
+    core.info(`Using pre-built image: ${imageTag}`)
   }
 
-  // 6. Trigger deploy (OIDC token still valid — 5 min lifetime, build+push is fast).
+  // 3. Trigger deploy.
   core.info(`Triggering deployment: ${imageName} → ${imageTag}`)
   const triggerRes = await fetch(`${url}/deploy?async=true`, {
     method: 'POST',
