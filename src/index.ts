@@ -256,18 +256,7 @@ async function run(): Promise<void> {
   }
   const { token: registrySecret } = await tokenRes.json() as { token: string }
 
-  // 3. docker login — --password-stdin keeps the secret out of process args and logs.
-  try {
-    await exec.exec('docker', ['login', registryHost, '-u', 'rollhook', '--password-stdin'], {
-      input: Buffer.from(registrySecret),
-    })
-  }
-  catch (e) {
-    core.setFailed(`docker login failed: ${(e as Error).message}`)
-    return
-  }
-
-  // 4. docker build
+  // 3. docker build
   core.info(`Building ${imageTag}...`)
   try {
     await exec.exec('docker', ['build', '-t', imageTag, '-f', dockerfile, buildContext])
@@ -277,34 +266,26 @@ async function run(): Promise<void> {
     return
   }
 
-  // 5. Push via skopeo — reads from Docker daemon, pushes with its own HTTP client.
-  // skopeo avoids Docker 28's legacy push protocol which fails through multi-hop
-  // proxy chains (Cloudflare Tunnel → Traefik → RollHook → Zot).
-  // Retry handles intermittent 520s from Cloudflare Tunnel concurrency limits
-  // (tunnel multiplexes requests over 4 connections; bursts of concurrent blob HEAD
-  // checks occasionally get canceled by the edge before the origin responds).
-  // On retry, already-uploaded blobs are detected and skipped.
+  // 4. Push via crane — serialized blob uploads to avoid Cloudflare Tunnel concurrency limits.
+  // Cloudflare Tunnel multiplexes over 4 connections; concurrent blob HEAD checks from
+  // docker push and skopeo get canceled by the edge (HTTP 520). crane's --jobs=1 serializes
+  // all registry operations, avoiding the burst that triggers the tunnel issue.
+  // Pipeline: docker save → crane push (serialized).
   core.info(`Pushing ${imageTag}...`)
-  await exec.exec('sudo', ['apt-get', 'install', '-y', '-qq', 'skopeo'], { silent: true })
-  const skopeoArgs = [
-    'copy',
-    `--dest-creds=rollhook:${registrySecret}`,
-    `docker-daemon:${imageTag}`,
-    `docker://${imageTag}`,
-  ]
-  for (let attempt = 1; attempt <= 3; attempt++) {
-    try {
-      await exec.exec('skopeo', skopeoArgs)
-      break
-    }
-    catch (e) {
-      if (attempt === 3) {
-        core.setFailed(`Image push failed after 3 attempts: ${(e as Error).message}`)
-        return
-      }
-      core.warning(`Push attempt ${attempt}/3 failed, retrying in 5s...`)
-      await new Promise(resolve => setTimeout(resolve, 5000))
-    }
+  try {
+    const craneVersion = 'v0.20.3'
+    await exec.exec('bash', ['-c',
+      `curl -sL "https://github.com/google/go-containerregistry/releases/download/${craneVersion}/go-containerregistry_Linux_x86_64.tar.gz" | sudo tar xzf - -C /usr/local/bin crane`,
+    ])
+    await exec.exec('crane', ['auth', 'login', registryHost, '-u', 'rollhook', '--password-stdin'], {
+      input: Buffer.from(registrySecret),
+    })
+    await exec.exec('docker', ['save', imageTag, '-o', '/tmp/image.tar'])
+    await exec.exec('crane', ['push', '/tmp/image.tar', imageTag, '--jobs', '1'])
+  }
+  catch (e) {
+    core.setFailed(`Image push failed: ${(e as Error).message}`)
+    return
   }
 
   // 6. Trigger deploy (OIDC token still valid — 5 min lifetime, build+push is fast).
