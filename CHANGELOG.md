@@ -1,3 +1,10 @@
+# [1.3.0](https://github.com/jkrumm/rollhook-action/compare/v1.2.0...v1.3.0) (2026-03-17)
+
+
+### Features
+
+* **action:** zero-secret build+push+deploy via OIDC ([63fb398](https://github.com/jkrumm/rollhook-action/commit/63fb3985b51db8a5333c15cd9a9b0aef6a3533b4))
+
 # [1.2.0](https://github.com/jkrumm/rollhook-action/compare/v1.1.0...v1.2.0) (2026-03-16)
 
 
