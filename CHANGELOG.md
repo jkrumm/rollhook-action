@@ -1,3 +1,10 @@
+## [1.4.2](https://github.com/jkrumm/rollhook-action/compare/v1.4.1...v1.4.2) (2026-03-17)
+
+
+### Bug Fixes
+
+* **push:** add retry and remove unnecessary TLS skip ([9ad2cbc](https://github.com/jkrumm/rollhook-action/commit/9ad2cbcfac856a104e3ecc03ee34a16ff9c2d533))
+
 ## [1.4.1](https://github.com/jkrumm/rollhook-action/compare/v1.4.0...v1.4.1) (2026-03-17)
 
 
