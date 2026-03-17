@@ -277,14 +277,32 @@ async function run(): Promise<void> {
     return
   }
 
-  // 5. docker push
+  // 5. docker push — retry up to 3 times with exponential backoff.
+  // Docker push is idempotent: already-pushed blobs are skipped on retry.
+  // Retries handle intermittent proxy/tunnel errors (e.g. Cloudflare 520).
   core.info(`Pushing ${imageTag}...`)
-  try {
-    await exec.exec('docker', ['push', imageTag])
-  }
-  catch (e) {
-    core.setFailed(`docker push failed: ${(e as Error).message}`)
-    return
+  {
+    const maxAttempts = 3
+    let lastError: Error | undefined
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        await exec.exec('docker', ['push', imageTag])
+        lastError = undefined
+        break
+      }
+      catch (e) {
+        lastError = e as Error
+        if (attempt < maxAttempts) {
+          const delaySec = attempt * 10
+          core.warning(`docker push attempt ${attempt}/${maxAttempts} failed, retrying in ${delaySec}s...`)
+          await new Promise(resolve => setTimeout(resolve, delaySec * 1000))
+        }
+      }
+    }
+    if (lastError) {
+      core.setFailed(`docker push failed after ${maxAttempts} attempts: ${lastError.message}`)
+      return
+    }
   }
 
   // 6. Trigger deploy (OIDC token still valid — 5 min lifetime, build+push is fast).
