@@ -1,3 +1,10 @@
+# [1.6.0](https://github.com/jkrumm/rollhook-action/compare/v1.5.0...v1.6.0) (2026-03-17)
+
+
+### Features
+
+* **auth:** use secret from /auth/token for stable polling and streaming ([2cf3a8a](https://github.com/jkrumm/rollhook-action/commit/2cf3a8a0a177319fc2352e567e7792518c079038))
+
 ## [1.4.4](https://github.com/jkrumm/rollhook-action/compare/v1.4.3...v1.4.4) (2026-03-17)
 
 
