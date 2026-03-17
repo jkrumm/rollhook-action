@@ -1,3 +1,10 @@
+# [1.4.0](https://github.com/jkrumm/rollhook-action/compare/v1.3.0...v1.4.0) (2026-03-17)
+
+
+### Features
+
+* **push:** retry docker push up to 3 times with exponential backoff ([4920972](https://github.com/jkrumm/rollhook-action/commit/4920972268787c1abb6e230d492b553eaeba75dc))
+
 # [1.3.0](https://github.com/jkrumm/rollhook-action/compare/v1.2.0...v1.3.0) (2026-03-17)
 
 
