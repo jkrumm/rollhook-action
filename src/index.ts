@@ -280,23 +280,31 @@ async function run(): Promise<void> {
   // 5. Push via skopeo — reads from Docker daemon, pushes with its own HTTP client.
   // skopeo avoids Docker 28's legacy push protocol which fails through multi-hop
   // proxy chains (Cloudflare Tunnel → Traefik → RollHook → Zot).
-  // --retry-times handles intermittent 520s from Cloudflare Tunnel concurrency limits
+  // Retry handles intermittent 520s from Cloudflare Tunnel concurrency limits
   // (tunnel multiplexes requests over 4 connections; bursts of concurrent blob HEAD
   // checks occasionally get canceled by the edge before the origin responds).
+  // On retry, already-uploaded blobs are detected and skipped.
   core.info(`Pushing ${imageTag}...`)
-  try {
-    await exec.exec('sudo', ['apt-get', 'install', '-y', '-qq', 'skopeo'], { silent: true })
-    await exec.exec('skopeo', [
-      'copy',
-      '--retry-times', '3',
-      `--dest-creds=rollhook:${registrySecret}`,
-      `docker-daemon:${imageTag}`,
-      `docker://${imageTag}`,
-    ])
-  }
-  catch (e) {
-    core.setFailed(`Image push failed: ${(e as Error).message}`)
-    return
+  await exec.exec('sudo', ['apt-get', 'install', '-y', '-qq', 'skopeo'], { silent: true })
+  const skopeoArgs = [
+    'copy',
+    `--dest-creds=rollhook:${registrySecret}`,
+    `docker-daemon:${imageTag}`,
+    `docker://${imageTag}`,
+  ]
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      await exec.exec('skopeo', skopeoArgs)
+      break
+    }
+    catch (e) {
+      if (attempt === 3) {
+        core.setFailed(`Image push failed after 3 attempts: ${(e as Error).message}`)
+        return
+      }
+      core.warning(`Push attempt ${attempt}/3 failed, retrying in 5s...`)
+      await new Promise(resolve => setTimeout(resolve, 5000))
+    }
   }
 
   // 6. Trigger deploy (OIDC token still valid — 5 min lifetime, build+push is fast).
