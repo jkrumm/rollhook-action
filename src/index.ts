@@ -280,12 +280,15 @@ async function run(): Promise<void> {
   // 5. Push via skopeo — reads from Docker daemon, pushes with its own HTTP client.
   // skopeo avoids Docker 28's legacy push protocol which fails through multi-hop
   // proxy chains (Cloudflare Tunnel → Traefik → RollHook → Zot).
+  // --retry-times handles intermittent 520s from Cloudflare Tunnel concurrency limits
+  // (tunnel multiplexes requests over 4 connections; bursts of concurrent blob HEAD
+  // checks occasionally get canceled by the edge before the origin responds).
   core.info(`Pushing ${imageTag}...`)
   try {
     await exec.exec('sudo', ['apt-get', 'install', '-y', '-qq', 'skopeo'], { silent: true })
     await exec.exec('skopeo', [
       'copy',
-      '--dest-tls-verify=false',
+      '--retry-times', '3',
       `--dest-creds=rollhook:${registrySecret}`,
       `docker-daemon:${imageTag}`,
       `docker://${imageTag}`,
