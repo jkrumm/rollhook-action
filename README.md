@@ -1,8 +1,8 @@
 # RollHook Deploy Action
 
-Trigger a zero-downtime rolling deployment via [RollHook](https://github.com/jkrumm/rollhook).
+Build, push, and deploy in one step using GitHub OIDC — no secrets required.
 
-- **No deploy secrets** — uses GitHub Actions OIDC, not stored tokens
+- **Zero secrets** — uses GitHub Actions OIDC, no `ROLLHOOK_SECRET` in CI
 - **Built-in registry** — push your image directly to RollHook, no GHCR or Docker Hub needed
 - **Live logs** — SSE log stream flows back into CI in real time
 
@@ -17,6 +17,7 @@ on:
 
 permissions:
   id-token: write   # required for OIDC
+  contents: read
 
 jobs:
   deploy:
@@ -24,34 +25,31 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build & push image to RollHook registry
-        run: |
-          echo "${{ secrets.ROLLHOOK_SECRET }}" | docker login ${{ vars.ROLLHOOK_URL }} -u rollhook --password-stdin
-          docker build -t ${{ vars.ROLLHOOK_URL }}/myapp:${{ github.sha }} .
-          docker push ${{ vars.ROLLHOOK_URL }}/myapp:${{ github.sha }}
-
       - uses: jkrumm/rollhook-action@v1
         with:
           url: ${{ vars.ROLLHOOK_URL }}
-          image_tag: ${{ vars.ROLLHOOK_URL }}/myapp:${{ github.sha }}
+          image_name: myapp
 ```
 
-**What you need:**
+**What you need in GitHub:**
 
 | Where | What |
 |-|-|
-| GitHub → Settings → Variables | `ROLLHOOK_URL` = `https://rollhook.example.com` |
-| GitHub → Settings → Secrets | `ROLLHOOK_SECRET` (for registry push only) |
-| Server | `ROLLHOOK_URL` env var set on the RollHook container |
+| Settings → Variables | `ROLLHOOK_URL` = `https://rollhook.example.com` |
 
-That's it. No registry service to run, no GHCR permissions, no deploy token to rotate.
+No secrets. The action handles everything.
 
 ## How it works
 
 1. Requests a short-lived OIDC token from GitHub Actions (audience = RollHook URL)
-2. POSTs to `/deploy` with the image tag — RollHook discovers which compose service to update from the running container's labels
-3. Streams real-time deploy logs via SSE back to CI
-4. Polls until `success` or `failed`, then fails the step accordingly
+2. Exchanges the OIDC token for a short-lived registry credential via `POST /auth/token`
+3. Logs in to the built-in RollHook registry (`docker login`)
+4. Builds the Docker image (`docker build`)
+5. Pushes to the registry (`docker push`)
+6. Triggers the rolling deployment via `POST /deploy`
+7. Streams real-time deploy logs via SSE back to CI and polls until `success` or `failed`
+
+Authorization happens entirely server-side: RollHook verifies the OIDC token and checks the `rollhook.allowed_repos` / `rollhook.allowed_refs` labels on the running container.
 
 ## Server-side: authorize your repo
 
@@ -60,7 +58,7 @@ Add one label to your app's compose service so RollHook knows which repos may de
 ```yaml
 services:
   myapp:
-    image: ${IMAGE_TAG:-your-rollhook-url/myapp:latest}
+    image: ${IMAGE_TAG:-rollhook.example.com/myapp:latest}
     labels:
       - rollhook.allowed_repos=myorg/myapp
       # Optional: restrict to specific refs (default: refs/heads/main, refs/heads/master)
@@ -72,8 +70,10 @@ services:
 | Input | Required | Default | Description |
 |-|-|-|-|
 | `url` | yes | — | RollHook server base URL |
-| `image_tag` | yes | — | Docker image tag to deploy |
-| `timeout` | no | `600` | Max seconds to wait for completion |
+| `image_name` | yes | — | Image name (without registry prefix or tag), e.g. `myapp` |
+| `dockerfile` | no | `Dockerfile` | Path to Dockerfile |
+| `context` | no | `.` | Docker build context path |
+| `timeout` | no | `600` | Max seconds to wait for deployment to complete |
 
 ## Outputs
 
@@ -81,3 +81,16 @@ services:
 |-|-|
 | `job_id` | RollHook job ID |
 | `status` | Final deployment status (`success` or `failed`) |
+
+## Bootstrapping
+
+The OIDC flow authorizes by checking the running container's labels. The very first deployment has no running container yet, so it must be done manually once:
+
+```bash
+docker login rollhook.example.com -u rollhook --password-stdin <<< "$ROLLHOOK_SECRET"
+docker build -t rollhook.example.com/myapp:initial .
+docker push rollhook.example.com/myapp:initial
+IMAGE_TAG=rollhook.example.com/myapp:initial docker compose up -d
+```
+
+After the first container is running with its labels, all subsequent deploys go through the action with zero secrets.
