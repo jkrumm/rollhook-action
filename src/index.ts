@@ -240,27 +240,38 @@ async function run(): Promise<void> {
     return
   }
 
+  // 2. Exchange OIDC token for registry credential + stable API secret.
+  // The secret never expires, so deploy trigger, polling, and log streaming won't 403.
+  core.info('Authenticating with RollHook...')
+  const tokenRes = await fetchWithRetry(
+    `${url}/auth/token`,
+    {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${oidcToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ image_name: imageName }),
+    },
+    3,
+    1000,
+  )
+  if (!tokenRes.ok) {
+    core.setFailed(`POST /auth/token failed (${tokenRes.status}): ${await tokenRes.text()}`)
+    return
+  }
+  const authBody = await tokenRes.json() as { token?: string, secret?: string }
+  if (!authBody.token || !authBody.secret) {
+    core.setFailed(`POST /auth/token returned incomplete response (missing token or secret)`)
+    return
+  }
+  const { token: registryToken, secret } = authBody
+
+  // All subsequent API calls use the stable secret (not the short-lived OIDC token).
   const headers: Record<string, string> = {
-    'Authorization': `Bearer ${oidcToken}`,
+    'Authorization': `Bearer ${secret}`,
     'Content-Type': 'application/json',
   }
 
-  // 2. Build + push to RollHook's built-in registry (skipped when image_tag is provided).
+  // 3. Build + push to RollHook's built-in registry (skipped when image_tag is provided).
   if (!externalImageTag) {
-    // Exchange OIDC token for registry credential.
-    core.info('Authenticating with RollHook...')
-    const tokenRes = await fetchWithRetry(
-      `${url}/auth/token`,
-      { method: 'POST', headers, body: JSON.stringify({ image_name: imageName }) },
-      3,
-      1000,
-    )
-    if (!tokenRes.ok) {
-      core.setFailed(`POST /auth/token failed (${tokenRes.status}): ${await tokenRes.text()}`)
-      return
-    }
-    const { token: registrySecret } = await tokenRes.json() as { token: string }
-
     // docker build
     core.info(`Building ${imageTag}...`)
     try {
@@ -271,11 +282,11 @@ async function run(): Promise<void> {
       return
     }
 
-    // docker push
+    // docker push (uses scoped registry token, not the static secret)
     core.info(`Pushing ${imageTag}...`)
     try {
       await exec.exec('docker', ['login', registryHost, '-u', 'rollhook', '--password-stdin'], {
-        input: Buffer.from(registrySecret),
+        input: Buffer.from(registryToken),
       })
       await exec.exec('docker', ['push', imageTag])
     }
@@ -288,7 +299,7 @@ async function run(): Promise<void> {
     core.info(`Using pre-built image: ${imageTag}`)
   }
 
-  // 3. Trigger deploy.
+  // 4. Trigger deploy.
   core.info(`Triggering deployment: ${imageName} → ${imageTag}`)
   const triggerRes = await fetch(`${url}/deploy?async=true`, {
     method: 'POST',
@@ -305,7 +316,7 @@ async function run(): Promise<void> {
   core.info(`Job queued: ${jobId}`)
   core.setOutput('job_id', jobId)
 
-  // 7. Run SSE streaming and status polling concurrently.
+  // 5. Run SSE streaming and status polling concurrently.
   const abortController = new AbortController()
 
   const pollPromise = pollUntilDone(url, headers, jobId, timeoutMs)
