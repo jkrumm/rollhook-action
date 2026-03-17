@@ -1,3 +1,10 @@
+## [1.4.1](https://github.com/jkrumm/rollhook-action/compare/v1.4.0...v1.4.1) (2026-03-17)
+
+
+### Bug Fixes
+
+* **push:** replace docker push with skopeo ([2ba4558](https://github.com/jkrumm/rollhook-action/commit/2ba4558f77164bcd9844ddf4c421851000cb67aa))
+
 # [1.4.0](https://github.com/jkrumm/rollhook-action/compare/v1.3.0...v1.4.0) (2026-03-17)
 
 
