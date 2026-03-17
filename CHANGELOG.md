@@ -1,3 +1,10 @@
+# [1.5.0](https://github.com/jkrumm/rollhook-action/compare/v1.4.5...v1.5.0) (2026-03-17)
+
+
+### Features
+
+* **deploy:** support pre-built image_tag for external registries ([8e62ea2](https://github.com/jkrumm/rollhook-action/commit/8e62ea215f573b0dc06e8a1777887f00ca6a6b2f))
+
 ## [1.4.5](https://github.com/jkrumm/rollhook-action/compare/v1.4.4...v1.4.5) (2026-03-17)
 
 
