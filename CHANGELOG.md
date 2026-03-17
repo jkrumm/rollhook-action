@@ -1,3 +1,10 @@
+## [1.4.4](https://github.com/jkrumm/rollhook-action/compare/v1.4.3...v1.4.4) (2026-03-17)
+
+
+### Bug Fixes
+
+* **push:** use crane with serialized uploads ([5217c84](https://github.com/jkrumm/rollhook-action/commit/5217c848634d652b6ed0921dea04231c1d5516e3))
+
 ## [1.4.3](https://github.com/jkrumm/rollhook-action/compare/v1.4.2...v1.4.3) (2026-03-17)
 
 
