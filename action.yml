@@ -1,5 +1,5 @@
 name: 'RollHook Deploy'
-description: 'Trigger a zero-downtime rolling deployment via RollHook with real-time log streaming'
+description: 'Zero-secret zero-downtime deployment via RollHook — build, push, and deploy in one step using GitHub OIDC'
 branding:
   icon: 'upload-cloud'
   color: 'blue'
@@ -7,9 +7,17 @@ inputs:
   url:
     description: 'RollHook server base URL (e.g. https://deploy.example.com)'
     required: true
-  image_tag:
-    description: 'Docker image tag to deploy (used for container discovery on the server)'
+  image_name:
+    description: 'Image name (without registry prefix or tag), e.g. myapp'
     required: true
+  dockerfile:
+    description: 'Path to Dockerfile'
+    required: false
+    default: 'Dockerfile'
+  context:
+    description: 'Docker build context path'
+    required: false
+    default: '.'
   timeout:
     description: 'Max seconds to wait for deployment to complete'
     required: false

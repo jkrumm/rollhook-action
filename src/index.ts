@@ -1,4 +1,5 @@
 import * as core from '@actions/core'
+import * as exec from '@actions/exec'
 
 interface Job {
   id: string
@@ -214,16 +215,20 @@ async function pollUntilDone(
 
 async function run(): Promise<void> {
   const rawUrl = core.getInput('url', { required: true }).trim()
-  const urlWithProtocol = /^https?:\/\//i.test(rawUrl) ? rawUrl : `https://${rawUrl}`
-  const url = new URL(urlWithProtocol).origin
-  const imageTag = core.getInput('image_tag', { required: true })
+  const url = new URL(/^https?:\/\//i.test(rawUrl) ? rawUrl : `https://${rawUrl}`).origin
+  const registryHost = url.replace(/^https?:\/\//, '')
+  const imageName = core.getInput('image_name', { required: true })
+  const dockerfile = core.getInput('dockerfile') || 'Dockerfile'
+  const buildContext = core.getInput('context') || '.'
+  const sha = process.env.GITHUB_SHA ?? 'latest'
+  const imageTag = `${registryHost}/${imageName}:${sha}`
+  const timeoutMs = (Number.parseInt(core.getInput('timeout') || '600', 10) || 600) * 1000
 
-  // Request a short-lived OIDC token from GitHub Actions.
-  // The audience is set to the RollHook server URL so the server can verify it.
+  // 1. Get OIDC token — audience is the RollHook server URL so the server can verify it.
   // Requires `permissions: id-token: write` in the calling workflow.
-  let token: string
+  let oidcToken: string
   try {
-    token = await core.getIDToken(url)
+    oidcToken = await core.getIDToken(url)
   }
   catch (e) {
     core.setFailed(
@@ -231,29 +236,67 @@ async function run(): Promise<void> {
     )
     return
   }
-  const app = imageTag.split('/').pop()!.split(':')[0]
-  const timeoutSec = Number.parseInt(core.getInput('timeout') || '600', 10) || 600
-  const timeoutMs = timeoutSec * 1000
 
   const headers: Record<string, string> = {
-    'Authorization': `Bearer ${token}`,
+    'Authorization': `Bearer ${oidcToken}`,
     'Content-Type': 'application/json',
   }
 
-  core.info(`Triggering deployment: ${app} → ${imageTag}`)
+  // 2. Exchange OIDC token for registry credential.
+  core.info('Authenticating with RollHook...')
+  const tokenRes = await fetchWithRetry(
+    `${url}/auth/token`,
+    { method: 'POST', headers, body: JSON.stringify({ image_name: imageName }) },
+    3,
+    1000,
+  )
+  if (!tokenRes.ok) {
+    core.setFailed(`POST /auth/token failed (${tokenRes.status}): ${await tokenRes.text()}`)
+    return
+  }
+  const { token: registrySecret } = await tokenRes.json() as { token: string }
 
-  // ?async=true returns {job_id} immediately instead of blocking until completion.
-  // Required so we can start streaming logs concurrently with polling.
+  // 3. docker login — --password-stdin keeps the secret out of process args and logs.
+  try {
+    await exec.exec('docker', ['login', registryHost, '-u', 'rollhook', '--password-stdin'], {
+      input: Buffer.from(registrySecret),
+    })
+  }
+  catch (e) {
+    core.setFailed(`docker login failed: ${(e as Error).message}`)
+    return
+  }
+
+  // 4. docker build
+  core.info(`Building ${imageTag}...`)
+  try {
+    await exec.exec('docker', ['build', '-t', imageTag, '-f', dockerfile, buildContext])
+  }
+  catch (e) {
+    core.setFailed(`docker build failed: ${(e as Error).message}`)
+    return
+  }
+
+  // 5. docker push
+  core.info(`Pushing ${imageTag}...`)
+  try {
+    await exec.exec('docker', ['push', imageTag])
+  }
+  catch (e) {
+    core.setFailed(`docker push failed: ${(e as Error).message}`)
+    return
+  }
+
+  // 6. Trigger deploy (OIDC token still valid — 5 min lifetime, build+push is fast).
+  core.info(`Triggering deployment: ${imageName} → ${imageTag}`)
   const triggerRes = await fetch(`${url}/deploy?async=true`, {
     method: 'POST',
     headers,
     body: JSON.stringify({ image_tag: imageTag }),
   })
-
   if (!triggerRes.ok) {
     const body = await triggerRes.text()
-    core.error(`Deploy trigger failed (${triggerRes.status}): ${body}`)
-    core.setFailed(`Deploy trigger returned ${triggerRes.status}`)
+    core.setFailed(`Deploy trigger failed (${triggerRes.status}): ${body}`)
     return
   }
 
@@ -261,10 +304,7 @@ async function run(): Promise<void> {
   core.info(`Job queued: ${jobId}`)
   core.setOutput('job_id', jobId)
 
-  // Run SSE streaming and status polling concurrently.
-  // When poll reaches a terminal state (or times out / errors), it triggers
-  // abortController.abort() via .finally() — this signals streamLogs to stop
-  // Phase 2 wait and proceed to the catchup fetch.
+  // 7. Run SSE streaming and status polling concurrently.
   const abortController = new AbortController()
 
   const pollPromise = pollUntilDone(url, headers, jobId, timeoutMs)
