@@ -1,3 +1,10 @@
+## [1.4.5](https://github.com/jkrumm/rollhook-action/compare/v1.4.4...v1.4.5) (2026-03-17)
+
+
+### Bug Fixes
+
+* **push:** remove invalid --jobs flag from crane push ([df71f7d](https://github.com/jkrumm/rollhook-action/commit/df71f7d510d94bc3c3a05be3a53990ee6fdcff2d))
+
 ## [1.4.4](https://github.com/jkrumm/rollhook-action/compare/v1.4.3...v1.4.4) (2026-03-17)
 
 
