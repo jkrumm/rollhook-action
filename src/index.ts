@@ -266,11 +266,10 @@ async function run(): Promise<void> {
     return
   }
 
-  // 4. Push via crane — serialized blob uploads to avoid Cloudflare Tunnel concurrency limits.
+  // 4. Push via crane — avoids concurrency issues with Cloudflare Tunnel.
   // Cloudflare Tunnel multiplexes over 4 connections; concurrent blob HEAD checks from
-  // docker push and skopeo get canceled by the edge (HTTP 520). crane's --jobs=1 serializes
-  // all registry operations, avoiding the burst that triggers the tunnel issue.
-  // Pipeline: docker save → crane push (serialized).
+  // docker push and skopeo get canceled by the edge (HTTP 520). crane push reads from a
+  // docker save tarball and pushes with a more controlled upload pipeline.
   core.info(`Pushing ${imageTag}...`)
   try {
     const craneVersion = 'v0.20.3'
@@ -281,7 +280,7 @@ async function run(): Promise<void> {
       input: Buffer.from(registrySecret),
     })
     await exec.exec('docker', ['save', imageTag, '-o', '/tmp/image.tar'])
-    await exec.exec('crane', ['push', '/tmp/image.tar', imageTag, '--jobs', '1'])
+    await exec.exec('crane', ['push', '/tmp/image.tar', imageTag])
   }
   catch (e) {
     core.setFailed(`Image push failed: ${(e as Error).message}`)
