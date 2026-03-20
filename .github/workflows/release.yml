@@ -18,7 +18,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          persist-credentials: false
+          token: ${{ secrets.RELEASE_TOKEN }} # PAT as jkrumm — bypasses branch protection ruleset
 
       - uses: actions/setup-node@v4
         with:
@@ -39,7 +39,7 @@ jobs:
 
       - name: Run semantic-release
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN }} # must be PAT — github-actions[bot] has no bypass rights
           GIT_AUTHOR_NAME: Johannes Krumm
           GIT_AUTHOR_EMAIL: jkrumm@users.noreply.github.com
           GIT_COMMITTER_NAME: Johannes Krumm
