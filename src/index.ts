@@ -222,6 +222,21 @@ async function run(): Promise<void> {
   const buildContext = core.getInput('context') || '.'
   const sha = process.env.GITHUB_SHA ?? 'latest'
   const timeoutMs = (Number.parseInt(core.getInput('timeout') || '600', 10) || 600) * 1000
+  // Multiline KEY=VALUE pairs forwarded as --build-arg to docker build. Blank
+  // lines and # comments are ignored. Values may contain '=' (only the first
+  // '=' splits key from value).
+  const buildArgFlags = core
+    .getMultilineInput('build_args')
+    .map(line => line.trim())
+    .filter(line => line && !line.startsWith('#'))
+    .flatMap((line) => {
+      const eq = line.indexOf('=')
+      if (eq < 1) {
+        core.warning(`Ignoring malformed build_args line (expected KEY=VALUE): ${line}`)
+        return []
+      }
+      return ['--build-arg', line]
+    })
 
   // Determine the image tag: use external if provided, otherwise build to RollHook registry.
   const registryHost = url.replace(/^https?:\/\//, '')
@@ -275,7 +290,13 @@ async function run(): Promise<void> {
     // docker build
     core.info(`Building ${imageTag}...`)
     try {
-      await exec.exec('docker', ['build', '-t', imageTag, '-f', dockerfile, buildContext])
+      await exec.exec('docker', [
+        'build',
+        '-t', imageTag,
+        '-f', dockerfile,
+        ...buildArgFlags,
+        buildContext,
+      ])
     }
     catch (e) {
       core.setFailed(`docker build failed: ${(e as Error).message}`)

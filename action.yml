@@ -21,6 +21,9 @@ inputs:
     description: 'Docker build context path'
     required: false
     default: '.'
+  build_args:
+    description: 'Multi-line KEY=VALUE pairs forwarded as --build-arg to docker build. Values bake into the image — only use for non-secret build inputs like public API URLs or browser SDK ingestion tokens.'
+    required: false
   timeout:
     description: 'Max seconds to wait for deployment to complete'
     required: false
