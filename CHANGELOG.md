@@ -1,3 +1,10 @@
+# [1.7.0](https://github.com/jkrumm/rollhook-action/compare/v1.6.0...v1.7.0) (2026-05-13)
+
+
+### Features
+
+* **build:** add build_args input for docker build ([c5e3495](https://github.com/jkrumm/rollhook-action/commit/c5e34956774a9d3b8ec807a7a7067718246ed23c))
+
 # [1.6.0](https://github.com/jkrumm/rollhook-action/compare/v1.5.0...v1.6.0) (2026-03-17)
 
 
