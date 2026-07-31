@@ -1,3 +1,10 @@
+# [1.8.0](https://github.com/jkrumm/rollhook-action/compare/v1.7.0...v1.8.0) (2026-07-31)
+
+
+### Features
+
+* **errors:** diagnose RollHook failures with a one-line verdict ([ec7c0c9](https://github.com/jkrumm/rollhook-action/commit/ec7c0c960f3194bf91c93a07b769049caa6a995b))
+
 # [1.7.0](https://github.com/jkrumm/rollhook-action/compare/v1.6.0...v1.7.0) (2026-05-13)
 
 
