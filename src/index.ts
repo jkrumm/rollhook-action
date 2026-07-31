@@ -13,6 +13,89 @@ interface Job {
 
 const TERMINAL_STATES = new Set(['success', 'failed'])
 
+/**
+ * Pull the human-readable message out of a RollHook error response.
+ * RollHook serves RFC 7807-shaped bodies ({ title, detail, status }); anything
+ * else (plain text, proxy error pages) falls back to the raw body.
+ */
+function responseDetail(body: string): string {
+  try {
+    const parsed = JSON.parse(body) as { detail?: unknown, error?: unknown, title?: unknown }
+    for (const candidate of [parsed.detail, parsed.error, parsed.title]) {
+      if (typeof candidate === 'string' && candidate.trim())
+        return candidate.trim()
+    }
+  }
+  catch {
+    // Not JSON — fall through to the raw body.
+  }
+  return body.trim()
+}
+
+/**
+ * Map a failed RollHook response to a one-line verdict that says who has to act.
+ *
+ * The status code decides the class; the detail string only refines the wording,
+ * since it is prose and may be reworded upstream. Returns null when nothing is
+ * recognised — the caller then reports status + body alone.
+ */
+function diagnoseFailure(status: number, detail: string): string | null {
+  // 503 is not one class: /auth/token uses it for an unreachable Docker daemon,
+  // /deploy uses it for ordinary queue backpressure. Only assert a host-side
+  // fault when the response actually says so — a wrong verdict here points the
+  // reader at a healthy socket proxy.
+  if (status === 503) {
+    if (/cannot reach the docker daemon/i.test(detail)) {
+      return 'RollHook cannot reach the Docker daemon — this is a host-side fault on the deploy target, '
+        + 'not a problem with this workflow. Check the Docker socket / socket proxy on the host.'
+    }
+    if (/server busy|try again later/i.test(detail))
+      return 'RollHook is busy with another deploy — transient backpressure, not a fault. Re-run this job.'
+    if (/request cancelled/i.test(detail))
+      return 'RollHook cancelled the request — usually a restart or shutdown mid-deploy. Re-run this job.'
+    return 'RollHook returned 503 — the server is unavailable or restarting.'
+  }
+
+  if (status === 403) {
+    if (/service not found/i.test(detail)) {
+      return 'RollHook has no running container matching this image — start the app on the host before '
+        + 'deploying, and check its rollhook.allowed_repos label.'
+    }
+    // Other 403s already name the offending repo or ref; pass them through.
+    return detail ? `RollHook denied authorization: ${detail}` : 'RollHook denied authorization for this workflow.'
+  }
+
+  // Older RollHook servers (before the 503 daemon contract) surface an
+  // unreachable Docker daemon as a generic discovery failure.
+  if (status === 500 && /service discovery failed/i.test(detail)) {
+    return 'RollHook could not discover the running service — usually a host-side Docker fault. '
+      + 'Check the Docker socket / socket proxy on the host.'
+  }
+
+  return null
+}
+
+/**
+ * Fail the action with a diagnosed verdict on top and the raw status + body
+ * underneath — in the annotation and in the job summary. The verdict is an
+ * addition, never a replacement: the server's own response is always shown.
+ */
+async function failRequest(label: string, res: Response): Promise<void> {
+  const body = await res.text()
+  const verdict = diagnoseFailure(res.status, responseDetail(body))
+  const raw = `${label} failed (${res.status}): ${body.trim() || '<empty response body>'}`
+
+  core.setFailed(verdict ? `${verdict}\n\n${raw}` : raw)
+
+  // Summary writes need GITHUB_STEP_SUMMARY; never let a missing one mask the failure.
+  await core.summary
+    .addHeading('RollHook Deployment Failed')
+    .addRaw(verdict ?? `${label} returned HTTP ${res.status}.`, true)
+    .addCodeBlock(raw)
+    .write()
+    .catch((err: Error) => core.debug(`Could not write job summary: ${err.message}`))
+}
+
 async function fetchWithRetry(
   url: string,
   options: RequestInit,
@@ -269,7 +352,7 @@ async function run(): Promise<void> {
     1000,
   )
   if (!tokenRes.ok) {
-    core.setFailed(`POST /auth/token failed (${tokenRes.status}): ${await tokenRes.text()}`)
+    await failRequest('POST /auth/token', tokenRes)
     return
   }
   const authBody = await tokenRes.json() as { token?: string, secret?: string }
@@ -328,8 +411,7 @@ async function run(): Promise<void> {
     body: JSON.stringify({ image_tag: imageTag }),
   })
   if (!triggerRes.ok) {
-    const body = await triggerRes.text()
-    core.setFailed(`Deploy trigger failed (${triggerRes.status}): ${body}`)
+    await failRequest('Deploy trigger', triggerRes)
     return
   }
 
