@@ -12,19 +12,22 @@ jobs:
       contents: write
       issues: write
       pull-requests: write
-    env:
-      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     steps:
-      - uses: actions/checkout@v4
+      # All three actions below are node24-native at these majors, so the job no
+      # longer needs FORCE_JAVASCRIPT_ACTIONS_TO_NODE24 to escape the deprecated
+      # node20 runtime. Every other step is a plain `run:`.
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
           token: ${{ secrets.RELEASE_TOKEN }} # PAT as jkrumm — bypasses branch protection ruleset
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
 
-      - uses: actions/cache@v4
+      # setup-node v5+ auto-caches when package.json has a `packageManager`
+      # field; it doesn't here, so this explicit cache stays authoritative.
+      - uses: actions/cache@v6
         with:
           path: ~/.npm
           key: ${{ runner.os }}-npm-${{ hashFiles('package-lock.json') }}
