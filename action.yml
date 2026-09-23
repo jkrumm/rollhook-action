@@ -28,11 +28,19 @@ inputs:
     description: 'Max seconds to wait for deployment to complete'
     required: false
     default: '600'
+  cloudflare_purge_hosts:
+    description: 'Multi-line list of hostnames to purge from the Cloudflare edge cache after a successful deploy, e.g. example.com. Blank lines and # comments are ignored.'
+    required: false
+  cloudflare_api_token:
+    description: 'Cloudflare API token with Zone:Read + Zone:Cache Purge permissions. Required when cloudflare_purge_hosts is set.'
+    required: false
 outputs:
   job_id:
     description: 'RollHook job ID'
   status:
     description: 'Final deployment status (success or failed)'
+  purged_hosts:
+    description: 'Comma-separated list of hostnames whose Cloudflare edge cache was purged'
 runs:
   using: 'node24'
   main: 'dist/index.js'

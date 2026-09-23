@@ -74,6 +74,8 @@ services:
 | `dockerfile` | no | `Dockerfile` | Path to Dockerfile |
 | `context` | no | `.` | Docker build context path |
 | `timeout` | no | `600` | Max seconds to wait for deployment to complete |
+| `cloudflare_purge_hosts` | no | — | Multi-line list of hostnames to purge from the Cloudflare edge cache after a successful deploy |
+| `cloudflare_api_token` | no | — | Cloudflare API token with Zone:Read + Zone:Cache Purge permissions. Required when `cloudflare_purge_hosts` is set |
 
 ## Outputs
 
@@ -81,6 +83,20 @@ services:
 |-|-|
 | `job_id` | RollHook job ID |
 | `status` | Final deployment status (`success` or `failed`) |
+| `purged_hosts` | Comma-separated list of hostnames whose Cloudflare edge cache was purged |
+
+## Cloudflare cache purge
+
+```yaml
+      - uses: jkrumm/rollhook-action@v1
+        with:
+          url: https://rollhook.example.com
+          image_name: my-site
+          cloudflare_purge_hosts: example.com
+          cloudflare_api_token: ${{ secrets.CLOUDFLARE_PURGE_TOKEN }}
+```
+
+The purge only runs after RollHook reports the deploy as `success` — a failed deploy never touches the cache. Purging by hostname (rather than the whole zone) is available on every Cloudflare plan, and only clears the given hostnames — safe even on a zone that also serves other content, like an image CDN, under a different hostname. Scope the token to `Zone:Read` + `Zone:Cache Purge` on just the zones you purge, keep it in repo secrets, and nothing broader. It pairs well with an origin `Cloudflare-CDN-Cache-Control` header set to a long edge TTL plus a Cache Rule making HTML eligible for edge caching — the purge step is what makes that combination safe to ship on every deploy.
 
 ## Bootstrapping
 
