@@ -1,3 +1,10 @@
+# [1.10.0](https://github.com/jkrumm/rollhook-action/compare/v1.9.0...v1.10.0) (2026-09-26)
+
+
+### Features
+
+* **cache:** rebuild Cloudflare purge as its own module with typed results ([ed7d588](https://github.com/jkrumm/rollhook-action/commit/ed7d588e8277f8bea6a252bc0751b062861c77ca))
+
 # [1.9.0](https://github.com/jkrumm/rollhook-action/compare/v1.8.0...v1.9.0) (2026-09-26)
 
 
