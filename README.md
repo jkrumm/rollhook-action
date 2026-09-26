@@ -92,11 +92,29 @@ services:
         with:
           url: https://rollhook.example.com
           image_name: my-site
-          cloudflare_purge_hosts: example.com
+          cloudflare_purge_hosts: |
+            example.com
+            www.example.com
           cloudflare_api_token: ${{ secrets.CLOUDFLARE_PURGE_TOKEN }}
 ```
 
-The purge only runs after RollHook reports the deploy as `success` — a failed deploy never touches the cache. Purging by hostname (rather than the whole zone) is available on every Cloudflare plan, and only clears the given hostnames — safe even on a zone that also serves other content, like an image CDN, under a different hostname. Scope the token to `Zone:Read` + `Zone:Cache Purge` on just the zones you purge, keep it in repo secrets, and nothing broader. It pairs well with an origin `Cloudflare-CDN-Cache-Control` header set to a long edge TTL plus a Cache Rule making HTML eligible for edge caching — the purge step is what makes that combination safe to ship on every deploy.
+**What happens.** Once RollHook reports the deploy as `success` (a failed deploy never touches the cache), the action resolves each host to its Cloudflare zone — walking `www.a.example.com` → `a.example.com` → `example.com` until one matches — groups hosts that share a zone into a single purge call, and purges by hostname rather than `purge_everything`. That's safe even on a zone that also serves other content (an image CDN, say) under a different hostname, and is available on every Cloudflare plan. A rate-limited request is retried automatically. The `purged_hosts` output lists everything that actually got purged.
+
+**Host format.** One or more hostnames, newline- or comma-separated (or both). Blank lines and `#` comments are ignored. A scheme, path, port, or trailing dot is stripped automatically, so `https://example.com/` and `example.com` are equivalent. Wildcards, bare IPs, and anything without a dot are rejected — before the docker build even starts — with every bad entry listed at once.
+
+**Token scope.** Scope `cloudflare_api_token` to `Zone:Read` + `Zone:Cache Purge` on just the zones you purge, keep it in repo secrets, and grant nothing broader. Required whenever `cloudflare_purge_hosts` is set; if it's set without any hosts, the action warns that the secret is unused rather than failing.
+
+**One-time Cloudflare setup.** This pairs with an origin `Cloudflare-CDN-Cache-Control` header set to a long edge TTL, plus a Cache Rule making HTML eligible for edge caching (Cloudflare's HTML defaults to bypassing cache) — the purge step is what makes shipping that combination on every deploy safe. Set both once per zone in the Cloudflare dashboard for `example.com`; they're independent of anything this action does per deploy.
+
+**Troubleshooting.** A purge failure never fails the deploy itself — it only fails this action run, since the deployment already succeeded and stale content may be live until the next purge:
+
+| Verdict | Cause | Fix |
+|-|-|-|
+| Token lacks Zone:Read + Cache Purge on `<zone>` | The token doesn't have both permissions on the zone that owns the host | Re-scope `cloudflare_api_token` in the Cloudflare dashboard |
+| Host isn't in any zone this token can see | Typo in the hostname, or the token is scoped to other zones | Check spelling; check the token's zone list |
+| Rate limited, re-run later | Cloudflare rate-limited the request after 3 attempts with backoff | Re-run the job |
+
+The job summary always includes a Host / Zone / Result table, plus the raw Cloudflare API errors underneath on failure.
 
 ## Bootstrapping
 
