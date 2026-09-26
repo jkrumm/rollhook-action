@@ -1,5 +1,7 @@
+import type { PurgeFailure } from './cloudflare.ts'
 import * as core from '@actions/core'
 import * as exec from '@actions/exec'
+import { describeFailureHint, formatCloudflareErrors, parsePurgeHosts, purgeCloudflareCache } from './cloudflare.ts'
 
 interface Job {
   id: string
@@ -12,33 +14,6 @@ interface Job {
 }
 
 const TERMINAL_STATES = new Set(['success', 'failed'])
-
-interface CloudflareZone {
-  id: string
-  name: string
-}
-
-interface CloudflareErrorEntry {
-  code: number
-  message: string
-}
-
-interface CloudflareListZonesResponse {
-  success: boolean
-  errors: CloudflareErrorEntry[]
-  result: CloudflareZone[]
-}
-
-interface CloudflarePurgeResponse {
-  success: boolean
-  errors: CloudflareErrorEntry[]
-}
-
-class CloudflareApiError extends Error {
-  constructor(readonly errors: CloudflareErrorEntry[]) {
-    super(errors.map(e => `[${e.code}] ${e.message}`).join('; '))
-  }
-}
 
 /**
  * Pull the human-readable message out of a RollHook error response.
@@ -144,178 +119,68 @@ async function fetchWithRetry(
 }
 
 /**
- * Diagnose a Cloudflare API failure into a one-line verdict. Mirrors
- * diagnoseFailure above — the error code decides the class, since Cloudflare's
- * error messages are prose that may be reworded upstream.
+ * Report the Cloudflare purge outcome: per-host/per-zone log lines, one job
+ * summary table (Host | Zone | Result), and — on any failure — the existing
+ * "deploy succeeded but cache wasn't purged" verdict with specific hints and
+ * the raw Cloudflare errors underneath. The deploy itself already succeeded,
+ * so a purge failure never fails it — only this action run.
  */
-function diagnoseCloudflareFailure(errors: CloudflareErrorEntry[]): string | null {
-  if (errors.some(e => e.code === 10000)) {
-    return 'Cloudflare rejected the API token — it likely lacks Zone:Read + Zone:Cache Purge '
-      + 'permissions on the relevant zone.'
-  }
-  return null
-}
-
-function formatCloudflareErrors(errors: CloudflareErrorEntry[]): string {
-  return errors.length > 0
-    ? errors.map(e => `[${e.code}] ${e.message}`).join('; ')
-    : '<no error detail>'
-}
-
-/**
- * Fail the action for a Cloudflare purge failure. The deploy itself already
- * succeeded, so the verdict leads with that distinction — this is stale edge
- * cache, not a broken deployment — same style as failRequest above.
- */
-async function failCloudflarePurge(params: { reason: string, errors: CloudflareErrorEntry[] }): Promise<void> {
-  const verdict = diagnoseCloudflareFailure(params.errors)
-  const raw = `${params.reason}: ${formatCloudflareErrors(params.errors)}`
-  const headline = 'Deployment succeeded, but the Cloudflare edge cache was not purged — stale content may be live.'
-
-  core.setFailed(verdict ? `${headline}\n\n${verdict}\n\n${raw}` : `${headline}\n\n${raw}`)
-
-  await core.summary
-    .addHeading('Cloudflare Cache Purge Failed')
-    .addRaw(verdict ? `${headline} ${verdict}` : headline, true)
-    .addCodeBlock(raw)
-    .write()
-    .catch((err: Error) => core.debug(`Could not write job summary: ${err.message}`))
-}
-
-/**
- * Walk label suffixes from most to least specific, stopping at two labels —
- * `www.a.example.com` yields `www.a.example.com`, `a.example.com`,
- * `example.com`, never the bare TLD.
- */
-function candidateZoneNames(host: string): string[] {
-  const labels = host.split('.')
-  const candidates: string[] = []
-  for (let i = 0; i <= labels.length - 2; i++)
-    candidates.push(labels.slice(i).join('.'))
-  return candidates
-}
-
-/**
- * Resolve the Cloudflare zone that owns a hostname by trying successively
- * shorter label suffixes against the Zones API. Lookups are cached per
- * candidate name so hosts sharing a parent domain only hit the API once.
- */
-async function resolveZone(params: {
-  host: string
-  token: string
-  cache: Map<string, CloudflareZone | null>
-}): Promise<CloudflareZone | null> {
-  for (const candidate of candidateZoneNames(params.host)) {
-    if (params.cache.has(candidate)) {
-      const cached = params.cache.get(candidate) ?? null
-      if (cached)
-        return cached
-      continue
-    }
-
-    const res = await fetchWithRetry(
-      `https://api.cloudflare.com/client/v4/zones?name=${encodeURIComponent(candidate)}`,
-      { headers: { Authorization: `Bearer ${params.token}` } },
-    )
-    const body = await res.json().catch(() => null) as CloudflareListZonesResponse | null
-    // A rejected lookup (bad token, missing Zone:Read) is not "no such zone" —
-    // surface Cloudflare's errors so the verdict can name the permission.
-    if (!res.ok || !body?.success) {
-      throw new CloudflareApiError(body?.errors?.length
-        ? body.errors
-        : [{ code: res.status, message: 'Non-2xx response with no parseable error body' }])
-    }
-    const zone = body.result[0]
-    params.cache.set(candidate, zone ?? null)
-    if (zone)
-      return zone
-  }
-  return null
-}
-
-/**
- * Purge a zone's edge cache for a set of hostnames, by hostname rather than
- * purge_everything — a shared zone may host other content (e.g. a CDN) whose
- * cache must survive. Chunks at Cloudflare's 30-hosts-per-request limit.
- */
-async function purgeZoneHosts(params: {
-  zoneId: string
+async function reportCloudflarePurge(params: {
   hosts: string[]
-  token: string
-}): Promise<CloudflareErrorEntry[]> {
-  for (let i = 0; i < params.hosts.length; i += 30) {
-    const chunk = params.hosts.slice(i, i + 30)
-    const res = await fetchWithRetry(
-      `https://api.cloudflare.com/client/v4/zones/${params.zoneId}/purge_cache`,
-      {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${params.token}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ hosts: chunk }),
-      },
-    )
-    const body = await res.json().catch(() => null) as CloudflarePurgeResponse | null
-    if (!res.ok || !body?.success) {
-      return body?.errors && body.errors.length > 0
-        ? body.errors
-        : [{ code: res.status, message: 'Non-2xx response with no parseable error body' }]
-    }
+  resolutions: { host: string, zone: { name: string } | null }[]
+  succeeded: { zone: { id: string, name: string }, hosts: string[] }[]
+  failures: PurgeFailure[]
+}): Promise<void> {
+  for (const { host, zone } of params.resolutions) {
+    if (zone)
+      core.info(`Resolved ${host} → zone ${zone.name}`)
   }
-  return []
-}
+  for (const group of params.succeeded)
+    core.info(`Purged ${group.hosts.length} host(s) in zone ${group.zone.name}: ${group.hosts.join(', ')}`)
 
-/**
- * Resolve each host to its zone, group by zone, and purge. Returns the
- * purged hosts on success, or null after reporting a failure via
- * failCloudflarePurge (deploy already succeeded — this never fails the
- * deployment itself, only surfaces stale-cache risk).
- */
-async function purgeCloudflareCache(params: { hosts: string[], token: string }): Promise<string[] | null> {
-  const zoneCache = new Map<string, CloudflareZone | null>()
-  const hostsByZoneId = new Map<string, string[]>()
-
-  for (const host of params.hosts) {
-    let zone: CloudflareZone | null
-    try {
-      zone = await resolveZone({ host, token: params.token, cache: zoneCache })
-    }
-    catch (err) {
-      await failCloudflarePurge({
-        reason: `Resolving the Cloudflare zone for ${host}`,
-        errors: err instanceof CloudflareApiError ? err.errors : [{ code: 0, message: (err as Error).message }],
-      })
-      return null
-    }
-
-    if (!zone) {
-      await failCloudflarePurge({
-        reason: `No Cloudflare zone found for ${host} or any parent domain`,
-        errors: [],
-      })
-      return null
-    }
-
-    hostsByZoneId.set(zone.id, [...(hostsByZoneId.get(zone.id) ?? []), host])
+  const zoneNameByHost = new Map<string, string>()
+  for (const { host, zone } of params.resolutions) {
+    if (zone)
+      zoneNameByHost.set(host, zone.name)
   }
 
-  for (const [zoneId, hosts] of hostsByZoneId) {
-    let errors: CloudflareErrorEntry[]
-    try {
-      errors = await purgeZoneHosts({ zoneId, hosts, token: params.token })
-    }
-    catch (err) {
-      errors = [{ code: 0, message: (err as Error).message }]
-    }
-
-    if (errors.length > 0) {
-      await failCloudflarePurge({ reason: `Purging Cloudflare cache for zone ${zoneId}`, errors })
-      return null
-    }
+  const resultByHost = new Map<string, string>()
+  for (const group of params.succeeded) {
+    for (const host of group.hosts)
+      resultByHost.set(host, 'Purged')
+  }
+  for (const failure of params.failures) {
+    const hint = describeFailureHint(failure) ?? formatCloudflareErrors(failure.errors)
+    for (const host of failure.hosts)
+      resultByHost.set(host, `Failed: ${hint}`)
   }
 
-  return params.hosts
+  const rows: [string, string, string][] = params.hosts.map(host => [
+    host,
+    zoneNameByHost.get(host) ?? '—',
+    resultByHost.get(host) ?? '—',
+  ])
+
+  const summary = core.summary
+    .addHeading('Cloudflare Cache Purge')
+    .addTable([
+      [{ data: 'Host', header: true }, { data: 'Zone', header: true }, { data: 'Result', header: true }],
+      ...rows,
+    ])
+
+  if (params.failures.length > 0) {
+    const headline = 'Deployment succeeded, but the Cloudflare edge cache was not purged — stale content may be live.'
+    const blocks = params.failures.map((failure) => {
+      const hint = describeFailureHint(failure)
+      const raw = `${failure.reason}: ${formatCloudflareErrors(failure.errors)}`
+      return hint ? `${hint}\n\n${raw}` : raw
+    })
+
+    core.setFailed(`${headline}\n\n${blocks.join('\n\n')}`)
+    summary.addRaw(headline, true).addCodeBlock(blocks.join('\n\n'))
+  }
+
+  await summary.write().catch((err: Error) => core.debug(`Could not write job summary: ${err.message}`))
 }
 
 /**
@@ -523,15 +388,23 @@ async function run(): Promise<void> {
       return ['--build-arg', line]
     })
 
-  // Optional post-deploy edge-cache purge. Blank lines and # comments are
-  // ignored, same parsing style as build_args.
-  const cloudflarePurgeHosts = core
-    .getMultilineInput('cloudflare_purge_hosts')
-    .map(line => line.trim())
-    .filter(line => line && !line.startsWith('#'))
+  // Optional post-deploy edge-cache purge. Newline AND comma separated;
+  // blank lines and # comments are ignored. Invalid entries fail the run
+  // before the docker build even starts.
+  const { hosts: cloudflarePurgeHosts, invalid: invalidPurgeHosts } = parsePurgeHosts(
+    core.getMultilineInput('cloudflare_purge_hosts'),
+  )
   const cloudflareApiToken = core.getInput('cloudflare_api_token')
   if (cloudflareApiToken)
     core.setSecret(cloudflareApiToken)
+
+  if (invalidPurgeHosts.length > 0) {
+    core.setFailed(
+      `cloudflare_purge_hosts has invalid entries:\n${
+        invalidPurgeHosts.map(({ entry, reason }) => `  - ${entry}: ${reason}`).join('\n')}`,
+    )
+    return
+  }
 
   if (cloudflarePurgeHosts.length > 0 && !cloudflareApiToken) {
     core.setFailed(
@@ -540,6 +413,9 @@ async function run(): Promise<void> {
     )
     return
   }
+
+  if (cloudflarePurgeHosts.length === 0 && cloudflareApiToken)
+    core.warning('cloudflare_api_token was set but cloudflare_purge_hosts is empty — the token is unused.')
 
   // Determine the image tag: use external if provided, otherwise build to RollHook registry.
   const registryHost = url.replace(/^https?:\/\//, '')
@@ -672,19 +548,12 @@ async function run(): Promise<void> {
       .write()
 
     if (cloudflarePurgeHosts.length > 0) {
-      const purged = await purgeCloudflareCache({ hosts: cloudflarePurgeHosts, token: cloudflareApiToken })
-      if (purged) {
-        core.info(`Purged Cloudflare cache for ${purged.join(', ')}`)
-        core.setOutput('purged_hosts', purged.join(','))
-        await core.summary
-          .addHeading('Cloudflare Cache Purge')
-          .addTable([
-            [{ data: 'Field', header: true }, { data: 'Value', header: true }],
-            ['Hosts', purged.join(', ')],
-          ])
-          .write()
-          .catch((err: Error) => core.debug(`Could not write job summary: ${err.message}`))
-      }
+      const result = await purgeCloudflareCache({ hosts: cloudflarePurgeHosts, token: cloudflareApiToken })
+      const purgedHosts = result.succeeded.flatMap(group => group.hosts)
+      if (purgedHosts.length > 0)
+        core.setOutput('purged_hosts', purgedHosts.join(','))
+
+      await reportCloudflarePurge({ hosts: cloudflarePurgeHosts, ...result })
     }
   }
   else {
