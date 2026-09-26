@@ -1,3 +1,10 @@
+# [1.9.0](https://github.com/jkrumm/rollhook-action/compare/v1.8.0...v1.9.0) (2026-09-26)
+
+
+### Features
+
+* **cache:** purge Cloudflare edge cache after a successful deploy ([0bcdb25](https://github.com/jkrumm/rollhook-action/commit/0bcdb25ae28f44167f9d88006be08fdeabf9bfda))
+
 # [1.8.0](https://github.com/jkrumm/rollhook-action/compare/v1.7.0...v1.8.0) (2026-07-31)
 
 
